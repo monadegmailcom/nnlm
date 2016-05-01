@@ -1,7 +1,12 @@
 module Perceptron
     ( runIterations,
-      getHyperplane
+      getHyperplane,
+      Iteration(..)
     ) where
+
+import qualified Data.Vector.Unboxed as V (
+  Vector, map, replicate, zipWith, cons, sum, head, tail, generate, foldr,
+  length, slice)
 
 data RecurPerceptron = RecurPerceptron {
   hyperplane :: [Double],
@@ -21,52 +26,70 @@ norm = sqrt . sum . map (\x -> x * x)
 vadd :: [Double] -> [Double] -> [Double]
 vadd = zipWith (+)
 
-getHyperplane ::
-  Double ->
-  (Int -> Double) ->            -- learning rate
-  [[Double]] ->
-  [[Double]] ->
-  (Int, [Double], Double)
-getHyperplane eps = (((head . dropWhile p) .) .) . runIterations where
-  p (_, _, e) = e >= eps
--- (f .) (g x) = (f .) . g $ x
-runIterations ::
-  (Int -> Double) ->            -- learning rate
-  [[Double]] ->
-  [[Double]] ->
-  [(Int, [Double], Double)]
-runIterations etaF ps1 ps2 = iterate f (1, w0, 1.0 / 0) where
-  -- start condition with normalized normal vector
-  w0 = take l $  1.0 : 1.0 : repeat 0.0
-  l =  1 + length (head ps1)
+smultV :: Double -> V.Vector Double -> V.Vector Double
+smultV r = V.map (r *)
 
-  -- eval all iterations lazily
-  f :: (Int, [Double], Double) -> (Int, [Double], Double)
-  f (n, ws_n, _) = (n + 1, ws_n1, e_n1) where
-    ws_n1 = smult (1.0 / norm (tail ws)) ws
-    ws = vadd ws_n delta
-    e_n1 = max (abs (head delta / head ws_n)) (norm (tail delta))
-    delta = nextDelta ps1 ps2 (etaF n) ws_n
+subV :: V.Vector Double -> V.Vector Double -> V.Vector Double
+subV = V.zipWith (-)
+
+addV :: V.Vector Double -> V.Vector Double -> V.Vector Double
+addV = V.zipWith (+)
+
+sprodV :: V.Vector Double -> V.Vector Double -> Double
+sprodV as = V.sum . V.zipWith (*) as
+
+-- euclidian vector norm
+normV :: V.Vector Double -> Double
+normV = sqrt . V.sum . V.map (\x -> x * x)
+
+data Iteration = Iteration { iterationI :: Int
+                             , iterationH :: V.Vector Double
+                             , iterationE :: Double} deriving (Show)
+
+getHyperplane ::
+  Int ->
+  Double ->
+  (Iteration -> Double) ->
+  V.Vector Double ->
+  V.Vector Double ->
+  Iteration
+getHyperplane dim eps etaF ptsA ptsB = head . dropWhile p $ its where
+  its = runIterations dim etaF ptsA ptsB
+  p itr = iterationE itr >= eps
+
+runIterations ::
+  Int ->
+  (Iteration -> Double) ->
+  V.Vector Double ->
+  V.Vector Double ->
+  [Iteration]
+runIterations dim etaF ptsA ptsB = iterate f $ Iteration 1 w_0 (1.0 / 0.0) where
+  w_0 = V.generate (1 + dim) f where
+    f 0 = 1
+    f 1 = 1
+    f _ = 0
+  f itr@(Iteration n w_n _) = Iteration (n + 1) w_n1 e_n1 where
+    w_n1 = smultV (1.0 / wsn) ws
+    ws = addV w_n d_n
+    wsn = normV $ V.tail ws
+    e_n1 = max (abs (V.head d_n / V.head w_n)) (normV . V.tail $ d_n)
+    d_n = nextDelta dim ptsA ptsB (etaF itr) w_n
 
 nextDelta ::
-  [[Double]] ->
-  [[Double]] ->
-  Double ->             -- learning rate
-  [Double] ->           -- weights with first element as bias
-  [Double]              -- new weight deltas
-nextDelta ps1 ps2 eta ws_n = smult alpha $ vsub m1 m2 where
-  alpha = eta / fromIntegral (length ps1 + length ps2)
-  m1 = condSum isClass2 ps1 -- sum of missclassified class 1 points
-  m2 = condSum (not . isClass2) ps2 -- sum of missclassified class 2 points
-  condSum p = foldr (f p) nv
-  nv = replicate (1 + (length . head) ps1) 0.0
-
-  f p cs as = if p cs then vadd as (1.0 : cs) else as
-  isClass2 cs = sprod ws_n (1.0 : cs) < 0.0
-
-  -- scalar product of two vectors
-  sprod :: [Double] -> [Double] -> Double
-  sprod as = sum . zipWith (*) as
-
-  -- diff of two vectors
-  vsub = zipWith (-)
+  Int -> -- dim
+  V.Vector Double -> -- class A points
+  V.Vector Double -> -- class B points
+  Double ->
+  V.Vector Double ->
+  V.Vector Double
+nextDelta dim ptsA ptsB eta ws_n = smultV alpha $ subV mA mB where
+  alpha = eta / fromIntegral (countA + countB)
+  countA = V.length ptsA `div` dim
+  countB = V.length ptsB `div` dim
+  mA = condSum isClass2 ptsA countA
+  mB = condSum (not . isClass2) ptsB countB
+  condSum p pts count = foldr (f p) nv [0..count-1] where
+    nv = V.replicate (1 + dim) 0.0
+    f p i acc = if p v then addV acc v else acc where
+      v = 1.0 `V.cons` V.slice (i * dim) dim pts
+  isClass2 v = sprodV ws_n v < 0.0

@@ -16,7 +16,8 @@ cabal-version:       >=1.10
 library
   hs-source-dirs:      src
   exposed-modules:     Perceptron
-  build-depends:       base >= 4.7 && < 5
+  build-depends:       base >= 4.7 && < 5,
+                       vector
   default-language:    Haskell2010
 
 executable nnlm-exe
@@ -36,6 +37,8 @@ test-suite nnlm-test
                      , hspec
                      , QuickCheck
                      , random
+                     , vector
+                     
 -- brew install gnuplot --with-x11
                      , easyplot
 -- does not build                      , hs-gchart
